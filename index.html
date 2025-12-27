@@ -3,265 +3,253 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>爱智之河：交互式哲学词条库</title>
+    <title>SophiaStream // 爱智之河 - 官方正式版</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: "Microsoft YaHei", sans-serif; }
-        #container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
-        /* 状态指示器 */
-        #ui-layer {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            color: rgba(77, 195, 255, 0.8);
-            z-index: 100;
-            pointer-events: none;
-            font-size: 14px;
-            letter-spacing: 1px;
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
+            background-color: #000000;
+            background: radial-gradient(circle at center, #001a33 0%, #000000 100%) !important; 
+            font-family: "Microsoft YaHei", sans-serif; 
         }
-        /* 隐藏摄像头预览但保持运行 */
+        #container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        #ui-layer {
+            position: absolute; top: 40px; left: 40px; color: rgba(140, 210, 255, 0.4);
+            z-index: 100; pointer-events: none; font-size: 11px; letter-spacing: 4px;
+            text-transform: uppercase; border-left: 2px solid rgba(77, 195, 255, 0.2); padding-left: 15px;
+        }
+        #status { margin-top: 8px; color: #4dc3ff; font-weight: bold; }
         #video-input { position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px; }
     </style>
 </head>
 <body>
 
     <div id="ui-layer">
-        <div>爱智之河 // RIVER OF WISDOM</div>
-        <div id="status">系统启动中...</div>
+        <div>SophiaStream // Global Repository</div>
+        <div id="status">AETHER INITIALIZING...</div>
     </div>
     <video id="video-input" playsinline></video>
     <div id="container"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
 
     <script>
-        // --- 全局配置与状态 ---
-        let scene, camera, renderer, particles, starField;
+        let scene, camera, renderer, interParticles, decorParticles, activeSprite = null;
         let termsData = [];
-        let activeIndex = -1;
-        let activeSprite = null;
-        let isTransitioning = false;
-        const PARTICLE_COUNT = 100; // 对应 CSV 的 100 条记录
-        const GALAXY_RADIUS = 50;
-
+        let activeIdx = -1, state = "IDLE"; 
+        let lastInteractionTime = Date.now();
+        let stateStartTime = 0;
+        
+        const INTER_COUNT = 150; 
+        const DECOR_COUNT = 2000; 
+        const AUTO_CRUISE_TIMEOUT = 20000; // 20秒无交互进入自动巡航
         const statusEl = document.getElementById('status');
         const videoElement = document.getElementById('video-input');
 
-        // --- 1. 数据加载 ---
-        async function loadData() {
-            return new Promise((resolve) => {
-                // 读取同目录下的 alphabeta.csv
-                Papa.parse("alphabeta.csv", {
-                    download: true,
+        // --- 1. 数据解析逻辑 ---
+        async function loadTerms() {
+            try {
+                const response = await fetch('alphabeta.csv');
+                const csvText = await response.text();
+                Papa.parse(csvText, {
                     header: true,
                     complete: (results) => {
-                        termsData = results.data.filter(d => d.word);
-                        console.log("加载词条数量:", termsData.length);
-                        resolve();
+                        termsData = results.data.filter(d => d.word && d.expression);
+                        statusEl.innerText = "AETHER STABILIZED // DATA LOADED";
                     }
                 });
-            });
+            } catch (err) {
+                console.error("CSV Loading Failed:", err);
+                statusEl.innerText = "DATA LOAD ERROR";
+            }
         }
 
-        // --- 2. 场景初始化 ---
-        function initScene() {
+        // --- 2. 视觉环境逻辑 ---
+        function getGalaxyColor(i) {
+            const hueBases = [195, 225, 275, 165]; 
+            const color = new THREE.Color();
+            color.setHSL((hueBases[i % 4] + Math.random() * 10) / 360, 0.9, 0.6);
+            return color;
+        }
+
+        function init() {
             scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 80;
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 3000);
+            camera.position.z = 250;
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setClearColor(0x000000, 0); 
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(window.devicePixelRatio);
             document.getElementById('container').appendChild(renderer.domElement);
 
-            // 粒子系统创建 (InstancedMesh)
-            const geometry = new THREE.SphereGeometry(0.3, 12, 12);
-            const material = new THREE.MeshBasicMaterial({ 
-                color: 0x4dc3ff, 
-                transparent: true, 
-                opacity: 0.8,
-                blending: THREE.AdditiveBlending 
-            });
+            const interGeo = new THREE.SphereGeometry(0.6, 12, 12);
+            interParticles = new THREE.InstancedMesh(interGeo, new THREE.MeshBasicMaterial({ 
+                transparent: true, blending: THREE.AdditiveBlending 
+            }), INTER_COUNT);
             
-            particles = new THREE.InstancedMesh(geometry, material, PARTICLE_COUNT);
-            
-            // 初始银河分布
             const dummy = new THREE.Object3D();
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                const angle = Math.random() * Math.PI * 2;
-                const radius = Math.random() * GALAXY_RADIUS;
-                const y = (Math.random() - 0.5) * 15;
-                
-                dummy.position.set(
-                    Math.cos(angle) * radius,
-                    y,
-                    Math.sin(angle) * radius
-                );
-                dummy.userData = { 
-                    originPos: dummy.position.clone(),
-                    angle: angle,
-                    radius: radius
-                };
+            const colors = new Float32Array(INTER_COUNT * 3);
+            for (let i = 0; i < INTER_COUNT; i++) {
+                const r = 50 + Math.random() * 120;
+                const a = Math.random() * Math.PI * 2;
+                dummy.position.set(Math.cos(a) * r, (Math.random()-0.5) * 80, Math.sin(a) * r);
                 dummy.updateMatrix();
-                particles.setMatrixAt(i, dummy.matrix);
+                interParticles.setMatrixAt(i, dummy.matrix);
+                getGalaxyColor(i).toArray(colors, i * 3);
             }
-            scene.add(particles);
+            interParticles.instanceColor = new THREE.InstancedBufferAttribute(colors, 3);
+            scene.add(interParticles);
 
-            window.addEventListener('resize', onWindowResize);
+            const decorGeo = new THREE.BufferGeometry();
+            const decorPos = [], decorCols = [];
+            for (let i = 0; i < DECOR_COUNT; i++) {
+                decorPos.push((Math.random()-0.5) * 1800, (Math.random()-0.5) * 1500, (Math.random()-0.5) * 1500);
+                const c = getGalaxyColor(i + 10);
+                decorCols.push(c.r, c.g, c.b);
+            }
+            decorGeo.setAttribute('position', new THREE.Float32BufferAttribute(decorPos, 3));
+            decorGeo.setAttribute('color', new THREE.Float32BufferAttribute(decorCols, 3));
+            decorParticles = new THREE.Points(decorGeo, new THREE.PointsMaterial({ 
+                size: 1.2, vertexColors: true, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending 
+            }));
+            scene.add(decorParticles);
         }
 
-        // --- 3. 词条文字渲染 (Canvas 纹理) ---
-        function createTextSprite(word, expression) {
+        function createTextSprite(data) {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            canvas.width = 1024;
-            canvas.height = 512;
-
-            // 清晰度优化
-            ctx.fillStyle = 'white';
-            ctx.shadowColor = 'rgba(77, 195, 255, 1)';
-            ctx.shadowBlur = 15;
-
-            // 绘制 Word
-            ctx.font = 'bold 50px "Microsoft YaHei"';
-            ctx.fillText(word, 50, 100);
-
-            // 绘制 Expression (自动换行)
-            ctx.font = '28px "Microsoft YaHei"';
-            ctx.shadowBlur = 5;
-            const words = expression.split('');
-            let line = '';
-            let y = 180;
-            for(let n = 0; n < words.length; n++) {
-                let testLine = line + words[n];
-                if (ctx.measureText(testLine).width > 800) {
-                    ctx.fillText(line, 50, y);
-                    line = words[n];
-                    y += 45;
-                } else {
-                    line = testLine;
-                }
-            }
+            canvas.width = 1024; canvas.height = 512;
+            ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+            ctx.shadowColor = 'rgba(77, 195, 255, 0.8)'; ctx.shadowBlur = 40;
+            ctx.font = 'bold 54px "Microsoft YaHei"';
+            ctx.fillText(data.word, 50, 100);
+            ctx.font = '28px "Microsoft YaHei"'; ctx.shadowBlur = 10;
+            let line = '', y = 190;
+            data.expression.split('').forEach(char => {
+                if (ctx.measureText(line + char).width > 850) {
+                    ctx.fillText(line, 50, y); line = char; y += 45;
+                } else { line += char; }
+            });
             ctx.fillText(line, 50, y);
-
-            const texture = new THREE.CanvasTexture(canvas);
-            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true, opacity: 0 });
-            const sprite = new THREE.Sprite(spriteMaterial);
-            sprite.scale.set(40, 20, 1);
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, opacity: 0 }));
+            sprite.scale.set(80, 40, 1);
             return sprite;
         }
 
-        // --- 4. 交互逻辑 (浮动与回收) ---
         function triggerShow() {
-            if (activeIndex !== -1 || isTransitioning) return;
-            isTransitioning = true;
-            activeIndex = Math.floor(Math.random() * termsData.length);
-            
-            const term = termsData[activeIndex];
-            activeSprite = createTextSprite(term.word, term.expression);
-            activeSprite.position.set(15, 0, 45); // 位于粒子旁边
+            if (state !== "IDLE" || termsData.length === 0) return;
+            activeIdx = Math.floor(Math.random() * INTER_COUNT);
+            const content = termsData[Math.floor(Math.random() * termsData.length)];
+            activeSprite = createTextSprite(content);
             scene.add(activeSprite);
-            
-            statusEl.innerText = "智识浮现：" + term.word.split('//')[0];
-            isTransitioning = false;
+            state = "APPROACH";
+            stateStartTime = Date.now();
+            statusEl.innerText = "智识召唤 // STREAM CALLING";
         }
 
         function triggerHide() {
-            if (activeIndex === -1 || isTransitioning) return;
-            isTransitioning = true;
-            
-            // 渐隐并移除
-            let opacity = 1;
-            const fade = () => {
-                opacity -= 0.1;
-                activeSprite.material.opacity = opacity;
-                if (opacity <= 0) {
-                    scene.remove(activeSprite);
-                    activeSprite = null;
-                    activeIndex = -1;
-                    isTransitioning = false;
-                    statusEl.innerText = "银河静流...";
-                } else {
-                    requestAnimationFrame(fade);
-                }
-            };
-            fade();
+            if (state === "APPROACH" || state === "FLOATING") {
+                state = "LEAVING"; stateStartTime = Date.now();
+                statusEl.innerText = "智识归航 // STREAM RETURNING";
+            }
         }
 
-        // --- 5. MediaPipe 手势识别 ---
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        // --- 3. 手势与自动巡航逻辑 ---
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
         hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
-        hands.onResults(onResults);
-
-        function onResults(results) {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                
-                // 极简手势判定
-                // 1. 张开手掌：所有指尖高于指根
-                const isOpen = landmarks[8].y < landmarks[6].y && landmarks[12].y < landmarks[10].y;
-                // 2. 握拳：食指尖低于掌心
-                const isFist = landmarks[8].y > landmarks[5].y && landmarks[12].y > landmarks[9].y;
-
+        hands.onResults(res => {
+            if (res.multiHandLandmarks && res.multiHandLandmarks[0]) {
+                lastInteractionTime = Date.now(); // 重置交互时间
+                const lm = res.multiHandLandmarks[0];
+                const isOpen = lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y < lm[14].y;
+                const isFist = lm[8].y > lm[5].y && lm[12].y > lm[9].y;
                 if (isOpen) triggerShow();
                 if (isFist) triggerHide();
             }
-        }
+        });
 
         const camera_mp = new Camera(videoElement, {
             onFrame: async () => { await hands.send({image: videoElement}); },
             width: 640, height: 480
         });
 
-        // --- 6. 渲染循环 ---
         function animate() {
             requestAnimationFrame(animate);
-            
-            const time = Date.now() * 0.0005;
+            const time = Date.now() * 0.001;
             const dummy = new THREE.Object3D();
+            const elapsed = Date.now() - stateStartTime;
 
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                // 默认旋转逻辑
-                let angle = (time * 0.2) + (i * 0.1);
-                let radius = (i / PARTICLE_COUNT) * GALAXY_RADIUS;
+            // 自动巡航判断
+            if (Date.now() - lastInteractionTime > AUTO_CRUISE_TIMEOUT && state === "IDLE") {
+                triggerShow();
+            }
+
+            decorParticles.rotation.y += 0.0003;
+            decorParticles.rotation.x += 0.0001;
+
+            for (let i = 0; i < INTER_COUNT; i++) {
+                let m = new THREE.Matrix4();
+                interParticles.getMatrixAt(i, m);
+                dummy.position.setFromMatrixPosition(m);
+                dummy.scale.set(1, 1, 1);
+
+                let angle = (time * 0.1) + (i * 0.2);
+                let radius = 60 + (i * 0.6);
                 let x = Math.cos(angle) * radius;
                 let z = Math.sin(angle) * radius;
-                let y = Math.sin(time + i) * 2;
+                let y = Math.sin(time * 0.6 + i) * 15;
 
-                // 如果是活动粒子，则向前浮动
-                if (i === activeIndex) {
-                    x = 0; y = 0; z = 50; 
-                    if(activeSprite) {
-                        activeSprite.material.opacity = Math.min(activeSprite.material.opacity + 0.05, 1);
+                if (i === activeIdx) {
+                    const targetPos = new THREE.Vector3(0, 5, 150);
+                    if (state === "APPROACH") {
+                        dummy.position.lerp(targetPos, 0.08); 
+                        dummy.scale.setScalar(1.0 + (dummy.position.z / 150.0) * 2.0);
+                        if (activeSprite) {
+                            activeSprite.position.copy(dummy.position).add(new THREE.Vector3(45, 8, 0));
+                            activeSprite.material.opacity = Math.min(activeSprite.material.opacity + 0.04, 1);
+                        }
+                        if (dummy.position.distanceTo(targetPos) < 1.5) state = "FLOATING";
+                    } 
+                    else if (state === "FLOATING") {
+                        x = Math.sin(time * 0.8) * 5; y = Math.cos(time * 0.6) * 5; z = 150 + Math.sin(time * 0.4) * 4;
+                        dummy.position.set(x, y, z); dummy.scale.setScalar(3.0);
+                        if (activeSprite) {
+                            activeSprite.position.copy(dummy.position).add(new THREE.Vector3(45, 8, 0));
+                            activeSprite.material.opacity = 1;
+                        }
+                        if (elapsed > 15000) triggerHide(); 
+                    } 
+                    else if (state === "LEAVING") {
+                        dummy.position.x -= 4; dummy.position.z += 2;
+                        dummy.scale.setScalar(Math.max(0.1, dummy.scale.x - 0.05));
+                        if (activeSprite) {
+                            activeSprite.position.copy(dummy.position).add(new THREE.Vector3(45, 8, 0));
+                            activeSprite.material.opacity -= 0.05;
+                        }
+                        if (activeSprite && activeSprite.material.opacity <= 0) {
+                            scene.remove(activeSprite); activeSprite = null; activeIdx = -1; state = "IDLE";
+                        }
                     }
                 }
-
-                dummy.position.set(x, y, z);
+                if (state === "IDLE" || i !== activeIdx) dummy.position.set(x, y, z);
                 dummy.updateMatrix();
-                particles.setMatrixAt(i, dummy.matrix);
+                interParticles.setMatrixAt(i, dummy.matrix);
             }
-            
-            particles.instanceMatrix.needsUpdate = true;
+            interParticles.instanceMatrix.needsUpdate = true;
             renderer.render(scene, camera);
         }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        // 启动程序
         (async () => {
-            await loadData();
-            initScene();
-            camera_mp.start();
-            animate();
-            statusEl.innerText = "银河静流...";
+            await loadTerms();
+            init(); animate();
+            camera_mp.start().catch(() => statusEl.innerText = "CAMERA ACCESS DENIED");
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
         })();
-
     </script>
 </body>
 </html>
