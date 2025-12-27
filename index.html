@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SophiaStream // 爱智之河 - 官方正式版</title>
+    <title>SophiaStream // 爱智之河 - 最终入库版</title>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; 
@@ -22,7 +22,6 @@
     </style>
 </head>
 <body>
-
     <div id="ui-layer">
         <div>SophiaStream // Global Repository</div>
         <div id="status">AETHER INITIALIZING...</div>
@@ -44,29 +43,31 @@
         
         const INTER_COUNT = 150; 
         const DECOR_COUNT = 2000; 
-        const AUTO_CRUISE_TIMEOUT = 20000; // 20秒无交互进入自动巡航
+        const AUTO_CRUISE_TIMEOUT = 20000; 
         const statusEl = document.getElementById('status');
         const videoElement = document.getElementById('video-input');
 
-        // --- 1. 数据解析逻辑 ---
         async function loadTerms() {
             try {
                 const response = await fetch('alphabeta.csv');
-                const csvText = await response.text();
-                Papa.parse(csvText, {
-                    header: true,
-                    complete: (results) => {
-                        termsData = results.data.filter(d => d.word && d.expression);
-                        statusEl.innerText = "AETHER STABILIZED // DATA LOADED";
-                    }
-                });
+                const blob = await response.blob();
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    Papa.parse(e.target.result, {
+                        header: true,
+                        skipEmptyLines: true,
+                        complete: (results) => {
+                            termsData = results.data.filter(d => d.word && d.expression);
+                            statusEl.innerText = "AETHER STABILIZED // DATA READY";
+                        }
+                    });
+                };
+                reader.readAsText(blob, 'UTF-8'); 
             } catch (err) {
-                console.error("CSV Loading Failed:", err);
                 statusEl.innerText = "DATA LOAD ERROR";
             }
         }
 
-        // --- 2. 视觉环境逻辑 ---
         function getGalaxyColor(i) {
             const hueBases = [195, 225, 275, 165]; 
             const color = new THREE.Color();
@@ -78,17 +79,13 @@
             scene = new THREE.Scene();
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 3000);
             camera.position.z = 250;
-
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             renderer.setClearColor(0x000000, 0); 
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.getElementById('container').appendChild(renderer.domElement);
 
             const interGeo = new THREE.SphereGeometry(0.6, 12, 12);
-            interParticles = new THREE.InstancedMesh(interGeo, new THREE.MeshBasicMaterial({ 
-                transparent: true, blending: THREE.AdditiveBlending 
-            }), INTER_COUNT);
-            
+            interParticles = new THREE.InstancedMesh(interGeo, new THREE.MeshBasicMaterial({ transparent: true, blending: THREE.AdditiveBlending }), INTER_COUNT);
             const dummy = new THREE.Object3D();
             const colors = new Float32Array(INTER_COUNT * 3);
             for (let i = 0; i < INTER_COUNT; i++) {
@@ -111,9 +108,7 @@
             }
             decorGeo.setAttribute('position', new THREE.Float32BufferAttribute(decorPos, 3));
             decorGeo.setAttribute('color', new THREE.Float32BufferAttribute(decorCols, 3));
-            decorParticles = new THREE.Points(decorGeo, new THREE.PointsMaterial({ 
-                size: 1.2, vertexColors: true, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending 
-            }));
+            decorParticles = new THREE.Points(decorGeo, new THREE.PointsMaterial({ size: 1.2, vertexColors: true, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending }));
             scene.add(decorParticles);
         }
 
@@ -146,22 +141,19 @@
             scene.add(activeSprite);
             state = "APPROACH";
             stateStartTime = Date.now();
-            statusEl.innerText = "智识召唤 // STREAM CALLING";
         }
 
         function triggerHide() {
             if (state === "APPROACH" || state === "FLOATING") {
                 state = "LEAVING"; stateStartTime = Date.now();
-                statusEl.innerText = "智识归航 // STREAM RETURNING";
             }
         }
 
-        // --- 3. 手势与自动巡航逻辑 ---
         const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
         hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
         hands.onResults(res => {
             if (res.multiHandLandmarks && res.multiHandLandmarks[0]) {
-                lastInteractionTime = Date.now(); // 重置交互时间
+                lastInteractionTime = Date.now();
                 const lm = res.multiHandLandmarks[0];
                 const isOpen = lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y < lm[14].y;
                 const isFist = lm[8].y > lm[5].y && lm[12].y > lm[9].y;
@@ -181,10 +173,7 @@
             const dummy = new THREE.Object3D();
             const elapsed = Date.now() - stateStartTime;
 
-            // 自动巡航判断
-            if (Date.now() - lastInteractionTime > AUTO_CRUISE_TIMEOUT && state === "IDLE") {
-                triggerShow();
-            }
+            if (Date.now() - lastInteractionTime > AUTO_CRUISE_TIMEOUT && state === "IDLE") triggerShow();
 
             decorParticles.rotation.y += 0.0003;
             decorParticles.rotation.x += 0.0001;
